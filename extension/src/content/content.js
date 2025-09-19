@@ -7,6 +7,9 @@
   let messageCount = 0;
   let initialGreetingShown = false;
   let selectedModule = 'Introduction to Digital Marketing';
+  const EDGE_MARGIN = 18;
+  let isDragging = false;
+  let dragMoved = false;
 
   function ensureMounted() {
     if (root) return;
@@ -20,8 +23,10 @@
     fab.title = 'Learning Assistant';
     fab.setAttribute('aria-label', 'Open Learning Assistant');
     fab.innerHTML = '';
-    fab.addEventListener('click', togglePanel);
+    fab.addEventListener('click', onFabClick);
     root.appendChild(fab);
+
+    setupFabDrag();
 
     // Panel
     panel = document.createElement('div');
@@ -101,6 +106,17 @@
     ensureMounted();
     panel.classList.toggle('open');
     updateFabVisibility();
+  }
+
+  function onFabClick(e) {
+    // Ignore click if a drag just occurred
+    if (dragMoved) {
+      dragMoved = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    togglePanel();
   }
 
   function appendMessage(text, role) {
@@ -185,10 +201,231 @@
     }
   }
 
+  // --- Theme detection & syncing with skool.com ---
+  function getPageThemePreference() {
+    const html = document.documentElement;
+    const body = document.body;
+
+    function attr(el, name) {
+      try { return (el && el.getAttribute && el.getAttribute(name)) || ''; } catch { return ''; }
+    }
+    function hasClassLike(el, token) {
+      if (!el || !el.classList) return false;
+      const t = token.toLowerCase();
+      for (const cls of el.classList) {
+        if (cls.toLowerCase() === t || cls.toLowerCase().includes(t)) return true;
+      }
+      return false;
+    }
+
+    const attrVals = [
+      attr(html, 'data-theme'), attr(body, 'data-theme'),
+      attr(html, 'theme'), attr(body, 'theme'),
+      attr(html, 'color-scheme'), attr(body, 'color-scheme')
+    ].map(v => (v || '').toLowerCase());
+
+    if (attrVals.some(v => v.includes('dark'))) return 'dark';
+    if (attrVals.some(v => v.includes('light'))) return 'light';
+
+    if (hasClassLike(html, 'theme-dark') || hasClassLike(body, 'theme-dark') || hasClassLike(html, 'dark') || hasClassLike(body, 'dark')) return 'dark';
+    if (hasClassLike(html, 'theme-light') || hasClassLike(body, 'theme-light') || hasClassLike(html, 'light') || hasClassLike(body, 'light')) return 'light';
+
+    const meta = document.querySelector('meta[name="color-scheme"]');
+    if (meta && typeof meta.content === 'string') {
+      const c = meta.content.toLowerCase();
+      if (c.includes('dark') && !c.includes('light')) return 'dark';
+      if (c.includes('light') && !c.includes('dark')) return 'light';
+    }
+
+    // Fallback 1: system preference
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    // Fallback 2: compute background luminance of body/html
+    const bgTheme = (() => {
+      function parseRgb(str) {
+        if (!str) return null;
+        const m = str.match(/rgba?\(([^)]+)\)/i);
+        if (!m) return null;
+        const parts = m[1].split(',').map(s => s.trim());
+        const r = parseFloat(parts[0]);
+        const g = parseFloat(parts[1]);
+        const b = parseFloat(parts[2]);
+        const a = parts[3] !== undefined ? parseFloat(parts[3]) : 1;
+        if ([r,g,b].some(v => Number.isNaN(v))) return null;
+        return { r, g, b, a: Number.isNaN(a) ? 1 : a };
+      }
+      function relLum({ r, g, b }) {
+        function toLinear(u) {
+          u = u / 255;
+          return u <= 0.03928 ? u / 12.92 : Math.pow((u + 0.055) / 1.055, 2.4);
+        }
+        const R = toLinear(r), G = toLinear(g), B = toLinear(b);
+        return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+      }
+      function getBg(el) {
+        if (!el) return null;
+        const cs = window.getComputedStyle(el);
+        const rgb = parseRgb(cs && cs.backgroundColor);
+        if (!rgb) return null;
+        if (rgb.a === 0) return null; // fully transparent
+        return rgb;
+      }
+      const order = [body, html];
+      for (const el of order) {
+        const rgb = getBg(el);
+        if (rgb) {
+          const L = relLum(rgb);
+          return L >= 0.45 ? 'light' : 'dark';
+        }
+      }
+      return null;
+    })();
+
+    if (bgTheme) return bgTheme;
+    return prefersDark ? 'dark' : 'light';
+  }
+
+  function applyThemeClass(theme) {
+    if (!root) return;
+    root.classList.remove('theme-light', 'theme-dark');
+    root.classList.add(theme === 'light' ? 'theme-light' : 'theme-dark');
+  }
+
+  function setupThemeSync() {
+    let rafId = 0;
+    const update = () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => applyThemeClass('dark'));
+    };
+    update();
+
+    const attrFilter = ['class', 'data-theme', 'theme', 'style'];
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === 'attributes' && attrFilter.includes(m.attributeName)) { update(); break; }
+        if (m.type === 'childList') { update(); break; }
+      }
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: attrFilter, childList: true, subtree: false });
+    if (document.body) {
+      observer.observe(document.body, { attributes: true, attributeFilter: attrFilter, childList: false, subtree: false });
+    } else {
+      const waitBody = new MutationObserver(() => {
+        if (document.body) {
+          observer.observe(document.body, { attributes: true, attributeFilter: attrFilter });
+          waitBody.disconnect();
+          update();
+        }
+      });
+      waitBody.observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    // Ignore system preference changes; always stay dark
+
+    // Periodic re-check in case the site toggles theme via CSS variables only
+    // No periodic re-check needed as we force dark mode
+  }
+
+  function setupFabDrag() {
+    if (!fab) return;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+    const thresholdSq = 9; // ~3px movement
+    let movedSq = 0;
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function onPointerDown(e) {
+      if (isPanelOpen()) return; // Do not allow dragging while panel is open
+      if (e.button !== undefined && e.button !== 0) return;
+      isDragging = true;
+      dragMoved = false;
+      movedSq = 0;
+      fab.classList.add('dragging');
+      fab.style.transition = 'none';
+      fab.style.transform = 'none';
+
+      const rect = fab.getBoundingClientRect();
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = rect.left;
+      startTop = rect.top;
+
+      // Switch to left/top positioning for the drag
+      fab.style.left = `${startLeft}px`;
+      fab.style.top = `${startTop}px`;
+      fab.style.right = 'auto';
+      fab.style.bottom = 'auto';
+
+      try { fab.setPointerCapture(e.pointerId); } catch {}
+      e.preventDefault();
+    }
+
+    function onPointerMove(e) {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      movedSq = dx * dx + dy * dy;
+      if (movedSq > thresholdSq) dragMoved = true;
+
+      const maxLeft = window.innerWidth - fab.offsetWidth - EDGE_MARGIN;
+      const maxTop = window.innerHeight - fab.offsetHeight - EDGE_MARGIN;
+      const newLeft = clamp(startLeft + dx, EDGE_MARGIN, maxLeft);
+      const newTop = clamp(startTop + dy, EDGE_MARGIN, maxTop);
+
+      fab.style.left = `${newLeft}px`;
+      fab.style.top = `${newTop}px`;
+      e.preventDefault();
+    }
+
+    function onPointerUp(e) {
+      if (!isDragging) return;
+      try { fab.releasePointerCapture(e.pointerId); } catch {}
+      isDragging = false;
+      fab.classList.remove('dragging');
+
+      // Snap to left/right and top/middle/bottom
+      const rect = fab.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const side = centerX < window.innerWidth / 2 ? 'left' : 'right';
+
+      const topSnap = EDGE_MARGIN;
+      const midSnap = Math.round((window.innerHeight - rect.height) / 2);
+      const botSnap = window.innerHeight - rect.height - EDGE_MARGIN;
+      const candidates = [topSnap, midSnap, botSnap];
+      const distances = candidates.map(t => Math.abs(t - rect.top));
+      const idx = distances.indexOf(Math.min(...distances));
+      const snappedTop = candidates[idx];
+
+      fab.style.transition = '';
+      fab.style.transform = 'none';
+      fab.style.top = `${snappedTop}px`;
+      if (side === 'left') {
+        fab.style.left = `${EDGE_MARGIN}px`;
+        fab.style.right = 'auto';
+      } else {
+        fab.style.left = 'auto';
+        fab.style.right = `${EDGE_MARGIN}px`;
+      }
+
+      e.preventDefault();
+    }
+
+    fab.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', onPointerUp, { passive: false });
+    window.addEventListener('pointercancel', onPointerUp, { passive: false });
+  }
+
   function init() {
     ensureMounted();
     applyStylesheet();
     updateFabVisibility();
+    setupThemeSync();
     // Load session for gating in future
     chrome.storage.sync.get(['la_session'], ({ la_session }) => {
       session = la_session || null;
