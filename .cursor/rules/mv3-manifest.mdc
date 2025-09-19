@@ -1,0 +1,30 @@
+---
+description: Rules for editing Manifest V3 config and extension capabilities
+globs: extension/manifest.json,dist/manifest.json
+---
+## MV3 Manifest Rules
+
+- Always edit [extension/manifest.json](mdc:extension/manifest.json); copy updates to `dist/` for testing.
+- Maintain `manifest_version: 3`, `action.default_popup`, and `background.service_worker` paths under `src/**`.
+- Keep host scope limited to `https://*.skool.com/*` and `https://skool.com/*`.
+- Only include required permissions: `storage`, `scripting`, `activeTab`. Avoid adding new permissions without explicit justification.
+- Ensure content script entries reference:
+  - js: [extension/src/content/content.js](mdc:extension/src/content/content.js)
+  - css: [extension/src/content/inject.css](mdc:extension/src/content/inject.css)
+- Keep `web_accessible_resources` limited to injected CSS and token files:
+  - [extension/src/styles/variables.css](mdc:extension/src/styles/variables.css)
+  - [extension/src/content/inject.css](mdc:extension/src/content/inject.css)
+
+### Allowed structure
+```json
+{
+  "manifest_version": 3,
+  "action": { "default_popup": "src/popup/popup.html" },
+  "background": { "service_worker": "src/background/service-worker.js", "type": "module" },
+  "permissions": ["storage", "scripting", "activeTab"],
+  "host_permissions": ["https://*.skool.com/*", "https://skool.com/*"],
+  "content_scripts": [ { "matches": ["https://*.skool.com/*", "https://skool.com/*"], "js": ["src/content/content.js"], "css": ["src/content/inject.css"], "run_at": "document_idle" } ],
+  "web_accessible_resources": [ { "resources": ["src/styles/variables.css", "src/content/inject.css"], "matches": ["https://*.skool.com/*", "https://skool.com/*"] } ]
+}
+```
+

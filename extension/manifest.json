@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Learning Assistant Widget",
+  "description": "Chat learning assistant for skool.com with login popup and right sidebar widget.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Learning Assistant",
+    "default_popup": "src/popup/popup.html"
+  },
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://*.skool.com/*",
+    "https://skool.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.skool.com/*",
+        "https://skool.com/*"
+      ],
+      "js": ["src/content/content.js"],
+      "css": ["src/content/inject.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/styles/variables.css",
+        "src/content/inject.css"
+      ],
+      "matches": [
+        "https://*.skool.com/*",
+        "https://skool.com/*"
+      ]
+    }
+  ]
+}

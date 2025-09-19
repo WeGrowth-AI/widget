@@ -1,0 +1,24 @@
+---
+description: Source code, UI, and styling conventions for the extension
+globs: extension/src/**
+---
+## Source & UI Rules
+
+- Prefer plain, readable JavaScript/CSS/HTML. Do not add frameworks.
+- Keep indentation and formatting consistent with existing files.
+- Avoid Tailwind; use CSS variables in [variables.css](mdc:extension/src/styles/variables.css).
+- For injected UI, minimize style leakage; prefer scoped class names and variables.
+- No runtime network calls for chat until API integration is introduced; keep mock logic.
+- Use `chrome.storage.sync` for mock auth session as already implemented.
+
+### File guidance
+- Background: lifecycle and broadcast only — [service-worker.js](mdc:extension/src/background/service-worker.js)
+- Content: DOM injection, widget toggle, basic chat mock — [content.js](mdc:extension/src/content/content.js)
+- Styles: inject stylesheet and tokens — [inject.css](mdc:extension/src/content/inject.css), [variables.css](mdc:extension/src/styles/variables.css)
+- Popup: login mock UI and storage — [popup.html](mdc:extension/src/popup/popup.html), [popup.css](mdc:extension/src/popup/popup.css), [popup.js](mdc:extension/src/popup/popup.js)
+
+### UX
+- Floating button mid‑right; toggles a 384px right sidebar.
+- Include Free Tier badge, message counter, Select Module card, welcome text, input + send.
+- Consider accessibility: focus styles, keyboard navigation, and ARIA where feasible.
+

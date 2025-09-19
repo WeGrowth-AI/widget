@@ -1,0 +1,49 @@
+@import url('../styles/variables.css');
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+.popup {
+  width: 340px;
+  min-height: 280px;
+  background: var(--la-bg);
+  color: var(--la-text);
+  font-family: var(--la-font);
+}
+
+.popup__header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--la-border);
+}
+
+.popup__brand {
+  font-weight: 600;
+}
+
+.popup__main {
+  padding: 16px;
+}
+
+.form { display: grid; gap: 10px; }
+.label { color: var(--la-text-muted); font-size: 12px; }
+.select, .input {
+  background: var(--la-input);
+  border: 1px solid var(--la-border);
+  color: var(--la-text);
+  padding: 10px 12px;
+  border-radius: var(--la-radius-md);
+}
+.btn {
+  padding: 10px 12px;
+  border-radius: var(--la-radius-md);
+  border: 1px solid var(--la-border);
+  cursor: pointer;
+  font-weight: 600;
+}
+.btn--gold { background: var(--la-gold); color: #000; }
+.btn--gold:hover { background: var(--la-gold-hover); }
+.status { font-size: 12px; color: var(--la-text-muted); }
+.hint { margin-top: 8px; font-size: 11px; color: var(--la-text-muted-2); }
+

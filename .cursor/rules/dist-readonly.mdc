@@ -1,0 +1,10 @@
+---
+description: Treat dist/ as read-only build output for Chrome loading
+globs: dist/**
+---
+## Dist Directory Rules
+
+- Do not edit files under `dist/**`. They are generated/copies for Chrome Dev mode.
+- Source of truth is under `extension/**`.
+- When testing, copy `extension/` → `dist/` to refresh assets and [manifest.json](mdc:dist/manifest.json).
+

@@ -1,0 +1,39 @@
+---
+alwaysApply: true
+description: Project structure and workflow for the Learning Assistant Widget MV3 extension
+---
+## Project Structure Guide
+
+- Edit source files only under `extension/src/**`.
+- Treat `dist/**` as build output for Chrome "Load unpacked"; do not edit it directly.
+- The main configuration is the MV3 manifest at [extension/manifest.json](mdc:extension/manifest.json). Keep `dist/manifest.json` in sync by copying from `extension/` when updating the build.
+
+### Key Entry Points
+- Manifest: [extension/manifest.json](mdc:extension/manifest.json)
+- Background service worker: [service-worker.js](mdc:extension/src/background/service-worker.js)
+- Content script: [content.js](mdc:extension/src/content/content.js)
+- Injected stylesheet: [inject.css](mdc:extension/src/content/inject.css)
+- Popup UI: [popup.html](mdc:extension/src/popup/popup.html), [popup.css](mdc:extension/src/popup/popup.css), [popup.js](mdc:extension/src/popup/popup.js)
+- Design tokens: [variables.css](mdc:extension/src/styles/variables.css)
+
+### Layout
+```
+extension/
+  manifest.json
+  src/
+    background/service-worker.js
+    content/content.js
+    content/inject.css
+    popup/popup.html
+    popup/popup.css
+    popup/popup.js
+    styles/variables.css
+dist/
+  (build/copy of extension/ for Chrome loading)
+```
+
+### Workflow
+- Make changes under `extension/`.
+- When ready to test in Chrome, copy `extension/` → `dist/` so that [dist/manifest.json](mdc:dist/manifest.json) reflects the same configuration.
+- See project notes in [PROJECT_STATE.md](mdc:PROJECT_STATE.md) and [README.md](mdc:extension/README.md).
+
