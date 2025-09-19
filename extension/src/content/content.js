@@ -32,23 +32,30 @@
     panel = document.createElement('div');
     panel.className = 'la-panel';
     panel.innerHTML = `
-      <div class=\"la-header\">
-        <div class=\"la-logo\">AI</div>
-        <div class=\"la-head-main\">
-          <div class=\"la-title\">Learning Assistant</div>
-          <div class=\"la-subrow\">
-            <span class=\"la-badge with-icon\"><span class=\"ico user-ico\" aria-hidden=\"true\"></span> Free Tier</span>
-            <span class=\"la-counter\" id=\"la-counter\">7/10 messages</span>
+      <div class="la-header">
+        <div class="la-logo">AI</div>
+        <div class="la-head-main">
+          <div class="la-title">Learning Assistant</div>
+          <div class="la-subrow">
+            <span class="la-badge with-icon"><span class="ico user-ico" aria-hidden="true"></span> <span id="la-tier-label">Free Tier</span></span>
+            <span class="la-counter" id="la-counter">7/10 messages</span>
           </div>
         </div>
-        <button class=\"la-close\" id=\"la-close\" aria-label=\"Close\">✕</button>
+        <button class="la-close" id="la-close" aria-label="Close">✕</button>
+      </div>
+
+      <div class="la-locked" id="la-locked" aria-hidden="true">
+        <div class="la-locked-card">
+          <div class="la-locked-title">Sign in to use the assistant</div>
+          <div class="la-locked-desc">Open the extension popup and complete login. Then return here.</div>
+        </div>
       </div>
 
       <div class="la-section">
         <details class="la-accordion" id="la-module-accordion">
           <summary>
-            <span class=\"la-sum-left\"><span class=\"la-sum-icon\">📚</span> <span>Select Module</span></span>
-            <span class=\"la-sum-caret\"></span>
+            <span class="la-sum-left"><span class="la-sum-icon">📚</span> <span>Select Module</span></span>
+            <span class="la-sum-caret"></span>
           </summary>
           <div class="la-card la-accordion-content">
             <div class="la-module-list" id="la-module-list" role="listbox" aria-label="Select Module">
@@ -149,14 +156,30 @@
     appendMessage(text, 'user');
     messageCount += 1;
     updateCounter();
-    // Mock bot reply
-    setTimeout(() => {
-      appendMessage("Hi! I'm your AI learning assistant. Select a module to get started, or ask me any questions about your course content.", 'bot');
-    }, 400);
+    // Backend chat
+    try {
+      const token = session?.token;
+      const organizationId = session?.user?.organizationId || null;
+      if (!token || !organizationId) throw new Error('Not authenticated');
+      const res = await chrome.runtime.sendMessage({ type: 'LA_CHAT_REQUEST', token, organizationId, text });
+      if (res?.ok && res.data) {
+        const reply = (res.data && (res.data.reply || res.data.message || res.data.text)) || "";
+        appendMessage(String(reply || '...'), 'bot');
+      } else {
+        appendMessage('There was a problem contacting the assistant. Please try again.', 'bot');
+      }
+    } catch (e) {
+      appendMessage('Please sign in via the extension popup to chat.', 'bot');
+    }
+  }
+
+  function isAuthenticated() {
+    return !!(session && session.token && session.validated && session.source === 'supabase');
   }
 
   function maybeShowInitialGreeting() {
     if (initialGreetingShown || !chatListEl) return;
+    if (!isAuthenticated()) return;
     appendMessage("Hi! I'm your AI learning assistant. Select a module to get started, or ask me any questions about your course content.", 'bot');
     initialGreetingShown = true;
   }
@@ -428,15 +451,51 @@
     setupThemeSync();
     // Load session for gating in future
     chrome.storage.sync.get(['la_session'], ({ la_session }) => {
-      session = la_session || null;
+      // Require validated Supabase session (set by popup after check-status)
+      if (la_session && la_session.token && la_session.validated && la_session.source === 'supabase') {
+        session = la_session;
+      } else {
+        session = null;
+      }
+      updateAuthGates();
     });
   }
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.type === 'LA_SESSION_UPDATED') {
       session = msg.payload;
+      updateAuthGates();
     }
   });
+
+  function updateAuthGates() {
+    if (!panel) return;
+    const sendBtn = panel.querySelector('#la-send');
+    const input = panel.querySelector('#la-input');
+    const counter = panel.querySelector('#la-counter');
+    const tierLabel = panel.querySelector('#la-tier-label');
+    const locked = panel.querySelector('#la-locked');
+    const signedIn = !!(session && session.token && session.validated && session.source === 'supabase');
+    if (sendBtn) sendBtn.disabled = !signedIn;
+    if (input) {
+      input.disabled = !signedIn;
+      input.placeholder = signedIn ? 'Ask me anything about the course...' : 'Sign in via the extension popup to chat';
+    }
+    if (counter) counter.textContent = signedIn ? '7/10 messages' : 'Sign in to start';
+    if (tierLabel) {
+      const tier = session?.user?.tier || 'Free';
+      tierLabel.textContent = typeof tier === 'string' ? tier : 'Free';
+    }
+    if (locked) {
+      if (signedIn) {
+        locked.setAttribute('aria-hidden', 'true');
+        locked.classList.remove('open');
+      } else {
+        locked.setAttribute('aria-hidden', 'false');
+        locked.classList.add('open');
+      }
+    }
+  }
 
   init();
 })();

@@ -1,4 +1,7 @@
-// Mock authentication storing state in chrome.storage.sync
+// Auth using Supabase; session persisted in chrome.storage.sync
+import { signInWithPassword, saveSession, loadSession, clearSession, getCurrentUser, getOrganizationIdFromUser, sendEmailOtp, verifyEmailOtp } from '../lib/supabase.js';
+import { sendRuntimeMessage } from '../lib/runtime.js';
+
 const emailInput = document.getElementById('email');
 const passwordInput = document.getElementById('password');
 const loginBtn = document.getElementById('loginBtn');
@@ -11,39 +14,58 @@ const subtitleEl = document.getElementById('viewSubtitle');
 const signOutBtn = document.getElementById('signOutBtn');
 const signOutIcon = document.getElementById('signOutIcon');
 const communityList = document.getElementById('communityList');
+const otpBtn = document.getElementById('otpBtn');
+const otpRow = document.getElementById('otpRow');
+const otpCodeInput = document.getElementById('otpCode');
+const verifyOtpBtn = document.getElementById('verifyOtpBtn');
 
 async function setStatus(text) {
   statusEl.textContent = text;
 }
 
-async function mockAuthenticate(email, _password) {
-  // In future, replace with Supabase; for now, accept any password
-  await new Promise(r => setTimeout(r, 400));
-  return {
-    ok: true,
-    user: {
-      id: email.includes('coach') ? 'u-coach' : 'u-student',
-      email,
-      tier: 'Free',
-      remainingMessages: 10,
-    }
+async function doPasswordSignIn(email, password) {
+  const { session, user } = await signInWithPassword(email, password);
+  if (!session || !user) throw new Error('Invalid credentials');
+  const organizationId = await getOrganizationIdFromUser(user);
+  const laSession = {
+    user: { id: user.id, email: user.email, organizationId },
+    token: session.access_token,
+    signedInAt: Date.now(),
   };
+  await saveSession(laSession);
+  return laSession;
 }
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const email = emailInput.value || 'creator@decster.com';
-  const password = passwordInput.value;
+  const email = emailInput.value || '';
+  const password = passwordInput.value || '';
   await setStatus('Signing in...');
-  const result = await mockAuthenticate(email, password);
-  if (result.ok) {
-    const session = { user: result.user, token: 'mock-token', signedInAt: Date.now() };
-    await chrome.storage.sync.set({ la_session: session });
-    await setStatus(`Signed in as ${result.user.email}`);
+  try {
+    let session = await doPasswordSignIn(email, password);
+    // Enrich via backend check-status
+    try {
+      const res = await sendRuntimeMessage({ type: 'LA_CHECK_STATUS', token: session.token });
+      if (res?.ok && res.data) {
+        const info = res.data || {};
+        session = {
+          ...session,
+          user: {
+            ...session.user,
+            organizationId: info.organizationId || session.user.organizationId || null,
+            role: info.role || 'STUDENT',
+            tier: info.tier || 'BASIC',
+            organizationName: info.organizationName || null
+          }
+        };
+        await saveSession(session);
+      }
+    } catch {}
+    await setStatus(`Signed in as ${session.user.email}`);
     chrome.runtime.sendMessage({ type: 'LA_SESSION_UPDATED', payload: session });
     showHome(session);
-  } else {
-    await setStatus('Login failed.');
+  } catch (err) {
+    await setStatus(err?.message || 'Login failed.');
   }
 });
 
@@ -54,20 +76,97 @@ if (togglePasswordBtn) {
   });
 }
 
+if (otpBtn) {
+  otpBtn.addEventListener('click', async () => {
+    const email = emailInput.value || '';
+    if (!email) { await setStatus('Enter your email first.'); return; }
+    await setStatus('Sending code...');
+    try {
+      await sendEmailOtp(email);
+      await setStatus('Code sent. Check your email.');
+      if (otpRow) { otpRow.classList.remove('hidden'); otpRow.setAttribute('aria-hidden', 'false'); }
+    } catch (e) {
+      await setStatus(e?.message || 'Failed to send code');
+    }
+  });
+}
+
+if (verifyOtpBtn) {
+  verifyOtpBtn.addEventListener('click', async () => {
+    const email = emailInput.value || '';
+    const token = (otpCodeInput?.value || '').trim();
+    if (!email || !token) { await setStatus('Enter email and code.'); return; }
+    await setStatus('Verifying code...');
+    try {
+      const { session, user } = await verifyEmailOtp(email, token);
+      const organizationId = await getOrganizationIdFromUser(user);
+      let laSession = { user: { id: user.id, email: user.email, organizationId }, token: session.access_token, signedInAt: Date.now() };
+      // Enrich via backend check-status
+      try {
+        const res = await sendRuntimeMessage({ type: 'LA_CHECK_STATUS', token: laSession.token });
+        if (res?.ok && res.data) {
+          const info = res.data || {};
+          laSession = {
+            ...laSession,
+            user: {
+              ...laSession.user,
+              organizationId: info.organizationId || laSession.user.organizationId || null,
+              role: info.role || 'STUDENT',
+              tier: info.tier || 'BASIC',
+              organizationName: info.organizationName || null
+            }
+          };
+        }
+      } catch {}
+      await saveSession(laSession);
+      await setStatus(`Signed in as ${user.email}`);
+      chrome.runtime.sendMessage({ type: 'LA_SESSION_UPDATED', payload: laSession });
+      showHome(laSession);
+    } catch (e) {
+      await setStatus(e?.message || 'Invalid code');
+    }
+  });
+}
+
 // Prefill previous state
-chrome.storage.sync.get(['la_session'], ({ la_session }) => {
-  if (la_session?.user?.email) {
-    statusEl.textContent = `Signed in as ${la_session.user.email}`;
-    showHome(la_session);
+loadSession().then(async (la_session) => {
+  try {
+    if (!la_session?.token) throw new Error('No session');
+    const res = await sendRuntimeMessage({ type: 'LA_CHECK_STATUS', token: la_session.token });
+    if (res?.ok && res.data) {
+      const info = res.data || {};
+      const updated = {
+        ...la_session,
+        validated: true,
+        source: 'supabase',
+        user: {
+          ...la_session.user,
+          organizationId: info.organizationId || la_session.user?.organizationId || null,
+          role: info.role || la_session.user?.role || 'STUDENT',
+          tier: info.tier || la_session.user?.tier || 'BASIC',
+          organizationName: info.organizationName || la_session.user?.organizationName || null
+        }
+      };
+      await saveSession(updated);
+      statusEl.textContent = `Signed in as ${updated.user.email}`;
+      showHome(updated);
+      return;
+    }
+    throw new Error('Invalid session');
+  } catch {
+    await clearSession();
   }
 });
 
 function showHome(session) {
   if (!homeView) return;
+  try { if (form && form.contains(document.activeElement)) document.activeElement.blur(); } catch {}
   form.classList.add('hidden');
   form.setAttribute('aria-hidden', 'true');
+  form.setAttribute('inert', '');
   homeView.classList.remove('hidden');
   homeView.setAttribute('aria-hidden', 'false');
+  homeView.removeAttribute('inert');
   titleEl.textContent = 'Communities';
   subtitleEl.textContent = 'Select a community to open its widget';
   renderCommunities(session);
@@ -111,11 +210,14 @@ function getMockCommunities(_session) {
 
 if (signOutBtn) {
   signOutBtn.addEventListener('click', async () => {
-    await chrome.storage.sync.remove('la_session');
+    await clearSession();
+    try { if (homeView && homeView.contains(document.activeElement)) document.activeElement.blur(); } catch {}
     form.classList.remove('hidden');
     form.setAttribute('aria-hidden', 'false');
+    form.removeAttribute('inert');
     homeView.classList.add('hidden');
     homeView.setAttribute('aria-hidden', 'true');
+    homeView.setAttribute('inert', '');
     titleEl.textContent = 'Welcome Back';
     subtitleEl.textContent = 'Sign in to continue to your dashboard';
     statusEl.textContent = '';
@@ -125,11 +227,14 @@ if (signOutBtn) {
 
 if (signOutIcon) {
   signOutIcon.addEventListener('click', async () => {
-    await chrome.storage.sync.remove('la_session');
+    await clearSession();
+    try { if (homeView && homeView.contains(document.activeElement)) document.activeElement.blur(); } catch {}
     form.classList.remove('hidden');
     form.setAttribute('aria-hidden', 'false');
+    form.removeAttribute('inert');
     homeView.classList.add('hidden');
     homeView.setAttribute('aria-hidden', 'true');
+    homeView.setAttribute('inert', '');
     titleEl.textContent = 'Welcome Back';
     subtitleEl.textContent = 'Sign in to continue to your dashboard';
     statusEl.textContent = '';

@@ -43,7 +43,17 @@
 
         <div class="row row--between">
           <label class="checkbox"><input id="remember" type="checkbox" /> <span>Remember me</span></label>
-          <a href="#" class="link">Forgot password?</a>
+          <button id="otpBtn" type="button" class="link" style="background:transparent;border:0;padding:0;">Email me a code</button>
+        </div>
+
+        <div id="otpRow" class="row hidden" aria-hidden="true" style="gap:8px;align-items:center;">
+          <div class="field" style="flex:1;">
+            <label class="field__label" for="otpCode">One-time code</label>
+            <div class="field__control">
+              <input id="otpCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="8" class="input" placeholder="Enter code" autocomplete="one-time-code" />
+            </div>
+          </div>
+          <button id="verifyOtpBtn" class="btn btn--primary" type="button">Verify</button>
         </div>
 
         <button id="loginBtn" class="btn btn--primary" type="submit">Sign In</button>

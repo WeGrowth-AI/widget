@@ -10,6 +10,9 @@ yarn-error.log*
 # Build output (Chrome loadable directory)
 dist/
 
+# Environment variables
+.env
+
 # Editor
 *.swp
 *.swo
