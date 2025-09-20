@@ -1,5 +1,5 @@
 // Auth using Supabase; session persisted in chrome.storage.sync
-import { signInWithPassword, saveSession, loadSession, clearSession, getCurrentUser, getOrganizationIdFromUser, sendEmailOtp, verifyEmailOtp } from '../lib/supabase.js';
+import { signInWithPassword, saveSession, loadSession, clearSession, getCurrentUser, getOrganizationIdFromUser, sendEmailOtp, verifyEmailOtp, fetchStudentOrganizations, signInWithGoogle } from '../lib/supabase.js';
 import { sendRuntimeMessage } from '../lib/runtime.js';
 
 const emailInput = document.getElementById('email');
@@ -18,6 +18,7 @@ const otpBtn = document.getElementById('otpBtn');
 const otpRow = document.getElementById('otpRow');
 const otpCodeInput = document.getElementById('otpCode');
 const verifyOtpBtn = document.getElementById('verifyOtpBtn');
+const googleBtn = document.getElementById('googleBtn');
 
 async function setStatus(text) {
   statusEl.textContent = text;
@@ -128,6 +129,39 @@ if (verifyOtpBtn) {
   });
 }
 
+if (googleBtn) {
+  googleBtn.addEventListener('click', async () => {
+    await setStatus('Signing in with Google...');
+    try {
+      const { session, user } = await signInWithGoogle();
+      const organizationId = await getOrganizationIdFromUser(user);
+      let laSession = { user: { id: user.id, email: user.email, organizationId }, token: session.access_token, signedInAt: Date.now() };
+      try {
+        const res = await sendRuntimeMessage({ type: 'LA_CHECK_STATUS', token: laSession.token });
+        if (res?.ok && res.data) {
+          const info = res.data || {};
+          laSession = {
+            ...laSession,
+            user: {
+              ...laSession.user,
+              organizationId: info.organizationId || laSession.user.organizationId || null,
+              role: info.role || 'STUDENT',
+              tier: info.tier || 'BASIC',
+              organizationName: info.organizationName || null
+            }
+          };
+        }
+      } catch {}
+      await saveSession(laSession);
+      await setStatus(`Signed in as ${user.email}`);
+      chrome.runtime.sendMessage({ type: 'LA_SESSION_UPDATED', payload: laSession });
+      showHome(laSession);
+    } catch (e) {
+      await setStatus(e?.message || 'Google sign-in failed');
+    }
+  });
+}
+
 // Prefill previous state
 loadSession().then(async (la_session) => {
   try {
@@ -175,27 +209,42 @@ function showHome(session) {
 
 function renderCommunities(session) {
   if (!communityList) return;
-  const communities = getMockCommunities(session);
-  communityList.innerHTML = '';
-  for (const c of communities) {
-    const item = document.createElement('button');
-    item.className = 'community-item';
-    item.setAttribute('role', 'listitem');
-    item.innerHTML = `<span class="community-logo">${c.initials}</span><span class="community-name">${c.name}</span>`;
-    item.addEventListener('click', async () => {
-      // Focus a skool tab or open one
-      try {
-        const [tab] = await chrome.tabs.query({ url: ['https://*.skool.com/*', 'https://skool.com/*'] });
-        if (tab?.id) {
-          await chrome.tabs.update(tab.id, { active: true });
-        } else {
-          await chrome.tabs.create({ url: 'https://www.skool.com' });
-        }
-        window.close();
-      } catch {}
-    });
-    communityList.appendChild(item);
-  }
+  // Preserve UI: fetch real orgs, fall back to mock silently
+  (async () => {
+    let communities = [];
+    try {
+      const orgRows = await fetchStudentOrganizations({ userId: session.user.id, access_token: session.token });
+      communities = (orgRows || []).map((r) => {
+        const org = r?.organization || {};
+        const name = org.name || 'Organization';
+        const initials = (name.split(/\s+/).map(w => w[0]).join('').slice(0, 2) || 'OR').toUpperCase();
+        return { name, initials };
+      });
+    } catch {}
+    if (!Array.isArray(communities) || communities.length === 0) {
+      communities = getMockCommunities(session);
+    }
+    communityList.innerHTML = '';
+    for (const c of communities) {
+      const item = document.createElement('button');
+      item.className = 'community-item';
+      item.setAttribute('role', 'listitem');
+      item.innerHTML = `<span class="community-logo">${c.initials}</span><span class="community-name">${c.name}</span>`;
+      item.addEventListener('click', async () => {
+        // Focus a skool tab or open one
+        try {
+          const [tab] = await chrome.tabs.query({ url: ['https://*.skool.com/*', 'https://skool.com/*'] });
+          if (tab?.id) {
+            await chrome.tabs.update(tab.id, { active: true });
+          } else {
+            await chrome.tabs.create({ url: 'https://www.skool.com' });
+          }
+          window.close();
+        } catch {}
+      });
+      communityList.appendChild(item);
+    }
+  })();
 }
 
 function getMockCommunities(_session) {

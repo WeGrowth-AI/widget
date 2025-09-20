@@ -5,12 +5,18 @@
 // Env/config: stored in chrome.storage.sync to avoid bundling secrets in code
 const CONFIG_KEYS = ['SUPABASE_URL', 'SUPABASE_ANON_KEY'];
 
+// Safe built-in defaults (used only if storage values are absent)
+const SUPABASE_CONFIG_DEFAULTS = {
+    SUPABASE_URL: 'https://wahihawlawxkjojllwfv.supabase.co',
+    SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndhaGloYXdsYXd4a2pvamxsd2Z2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYxNTU4MjksImV4cCI6MjA3MTczMTgyOX0.9DynpYyMXBy_Q1n7dA5BKqx5oqCL1WgOLg0tmfnHqsI'
+};
+
 async function getConfig() {
 	return new Promise((resolve) => {
 		chrome.storage.sync.get(CONFIG_KEYS, (items) => {
 			resolve({
-				SUPABASE_URL: items.SUPABASE_URL || '',
-				SUPABASE_ANON_KEY: items.SUPABASE_ANON_KEY || ''
+                SUPABASE_URL: items.SUPABASE_URL || SUPABASE_CONFIG_DEFAULTS.SUPABASE_URL,
+                SUPABASE_ANON_KEY: items.SUPABASE_ANON_KEY || SUPABASE_CONFIG_DEFAULTS.SUPABASE_ANON_KEY
 			});
 		});
 	});
@@ -137,6 +143,47 @@ export async function verifyEmailOtp(email, token) {
 	return { session: { access_token: data.access_token, refresh_token: data.refresh_token, expires_in: data.expires_in }, user };
 }
 
+// Google OAuth (implicit flow) via chrome.identity
+function parseHashParams(url) {
+    try {
+        const u = new URL(url);
+        const hash = (u.hash || '').replace(/^#/, '');
+        let obj = {};
+        if (hash) {
+            const qs = new URLSearchParams(hash);
+            for (const [k, v] of qs.entries()) obj[k] = v;
+        }
+        if (!obj.access_token) {
+            const qs2 = u.searchParams;
+            for (const [k, v] of qs2.entries()) obj[k] = v;
+        }
+        return obj;
+    } catch { return {}; }
+}
+
+export async function signInWithGoogle() {
+    const { SUPABASE_URL } = await getConfig();
+    if (!SUPABASE_URL) throw new Error('Missing Supabase config');
+    const redirectUrl = chrome.identity.getRedirectURL();
+    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectUrl)}&response_type=token`;
+    const resultUrl = await new Promise((resolve, reject) => {
+        try {
+            chrome.identity.launchWebAuthFlow({ url: authUrl, interactive: true }, (redirectedTo) => {
+                const err = chrome.runtime.lastError;
+                if (err) { reject(new Error(err.message || 'Authorization failed')); return; }
+                if (!redirectedTo) { reject(new Error('No redirect URL')); return; }
+                resolve(redirectedTo);
+            });
+        } catch (e) { reject(e); }
+    });
+    const params = parseHashParams(resultUrl);
+    const access_token = params.access_token;
+    const expires_in = params.expires_in ? Number(params.expires_in) : undefined;
+    if (!access_token) throw new Error('Authorization denied');
+    const user = await restGetUser(access_token);
+    return { session: { access_token, expires_in }, user };
+}
+
 // Storage helpers for session persistence (chrome.storage.sync)
 export async function saveSession(session) {
 	return chrome.storage.sync.set({ la_session: session });
@@ -205,10 +252,50 @@ export async function ensureSecureAccess({ organizationId, dataType, access_toke
 	throw new Error('Unknown dataType');
 }
 
+// Organizations for a user (via Membership → Organization join)
+export async function fetchStudentOrganizations({ userId, access_token }) {
+    const q = new URLSearchParams();
+    q.set('userId', `eq.${userId}`);
+    q.set('role', 'eq.STUDENT');
+    q.set('select', 'organization:Organization(*)');
+    const rows = await authedFetch('Membership', access_token, `?${q.toString()}`);
+    return Array.isArray(rows) ? rows : [];
+}
+
 // Expose config utilities for setup
 export async function setSupabaseConfig({ url, anonKey }) {
 	await chrome.storage.sync.set({ SUPABASE_URL: url, SUPABASE_ANON_KEY: anonKey });
 	return true;
+}
+
+// Test connection
+export async function testSupabaseConnection() {
+	try {
+		const { SUPABASE_URL, SUPABASE_ANON_KEY } = await getConfig();
+		if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+			console.error('❌ Supabase config missing');
+			return false;
+		}
+
+		// Test with a simple REST API call to check connection
+		const resp = await fetch(`${SUPABASE_URL}/rest/v1/User?select=count&limit=1`, {
+			headers: {
+				'apikey': SUPABASE_ANON_KEY,
+				'Accept': 'application/json'
+			}
+		});
+
+		if (!resp.ok) {
+			console.error('❌ Supabase connection failed:', resp.status, resp.statusText);
+			return false;
+		}
+
+		console.log('✅ Supabase connection successful!');
+		return true;
+	} catch (err) {
+		console.error('❌ Supabase connection failed:', err);
+		return false;
+	}
 }
 
 
